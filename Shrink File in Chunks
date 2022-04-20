@@ -82,3 +82,54 @@ WHILE @CURSIZE>=@TARSIZE
             SET @I=@I+1
       END
 PRINT 'Shrinking Completed for given range size.'
+=========================================================================================
+--Script-3: 
+
+Use DBName
+go
+DECLARE @shrinkIncrement INT -- amount to shrink each time in MB
+DECLARE @shrinkCount INT -- number of shrinks to perform
+DECLARE @fileId NVARCHAR(5)  -- FileId 
+ 
+SET @shrinkIncrement = 10240
+SET @shrinkCount = 5
+SET @fileId = 3    ---select * from sysfiles
+ 
+/************************************************/
+ 
+DECLARE @currentSize BIGINT
+DECLARE @newSize BIGINT
+DECLARE @LastNewSize BIGINT
+DECLARE @cmd NVARCHAR(1024)
+ 
+shrink_start:
+ 
+SET @currentSize=(SELECT [size] FROM sys.database_files WHERE [file_id]=@fileId)
+SET @currentSize=(SELECT (@currentSize*8)/1024) 
+SET @newSize=@currentSize-@shrinkIncrement
+ 
+print getdate()
+PRINT 'Current Size: ' + CONVERT(NVARCHAR(128),@currentSize)
+PRINT 'New Size:  ' + CONVERT(NVARCHAR(128),@newSize)
+PRINT 'Last New Size:  ' + CONVERT(NVARCHAR(128),@lastNewSize)
+ 
+IF @newSize < 0 or (@newsize = @lastNewSize)
+BEGIN
+                  GOTO ExitProcess
+END
+ 
+SET @cmd = 'DBCC SHRINKFILE (' + @fileid + ', ' + CONVERT(NVARCHAR(128),@newSize) + ')'
+PRINT 'Command Run: "' + @cmd + '"'
+EXEC (@cmd)
+ 
+SET @lastNewSize = @newSize
+SET @shrinkCount = @shrinkCount - 1
+ 
+IF @shrinkCount > 0 
+BEGIN
+                  WAITFOR DELAY '00:00:10'     --'00:05:00'
+                  GOTO shrink_start
+END
+ 
+ExitProcess:
+PRINT 'End Process'
