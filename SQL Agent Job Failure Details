@@ -1,0 +1,19 @@
+Script to find Job failure error details:
+
+select j.name as JOB_NAME,left(h.message,4000)as ErrorMessage,CASE h.run_date WHEN 0 THEN NULL ELSE
+    convert(datetime, 
+            stuff(stuff(cast(h.run_date as nchar(8)), 7, 0, '-'), 5, 0, '-') + N' ' + 
+            stuff(stuff(substring(cast(1000000 + h.run_time as nchar(7)), 2, 6), 5, 0, ':'), 3, 0, ':'), 
+            120) END AS [RunDate],
+    CASE  WHEN convert(varchar,len(h.run_duration))=1 THEN '00:00:0'+cast(h.run_duration as nchar(8))
+					WHEN convert(varchar,len(h.run_duration))=2 THEN '00:00:'+cast(h.run_duration as nchar(8))
+					WHEN convert(varchar,len(h.run_duration))=3 THEN '00:0'+substring (cast(h.run_duration as nchar(8)),1,1)+':'+substring (cast(h.run_duration as nchar(8)),2,2)
+					WHEN convert(varchar,len(h.run_duration))=4 THEN '00:'+substring (cast(h.run_duration as nchar(8)),1,2)+':'+substring (cast(h.run_duration as nchar(8)),3,2)
+					WHEN convert(varchar,len(h.run_duration))=5 THEN '0'+substring (cast(h.run_duration as nchar(8)),1,1)+':'+substring (cast(h.run_duration as nchar(8)),2,2)+':'+substring (cast(h.run_duration as nchar(8)),4,2)
+					WHEN convert(varchar,len(h.run_duration))=6 THEN substring (cast(h.run_duration as nchar(8)),1,2)+':'+substring (cast(h.run_duration as nchar(8)),3,2)+':'+substring (cast(h.run_duration as nchar(8)),5,2) end as duration
+
+from msdb.dbo.sysjobs j, msdb.dbo.sysjobhistory h
+where j.job_id=h.job_id and j.name = 'putjobnamehere'
+--and h.step_id=0
+and h.run_status=0
+and run_date>=convert(varchar,getdate()-1,112)
