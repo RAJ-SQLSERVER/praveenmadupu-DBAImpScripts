@@ -1,0 +1,31 @@
+
+drop table #sp_who
+create table #sp_who (
+  spid        smallint,
+  status    nchar(30),
+  login    nchar(128),
+  hostname    nchar(128),
+  blk        char(5),
+  dbname    nchar(128),
+  cmd        nchar(16),
+  CPUTime   int,
+  DiskIO    int,
+  LastBatch varchar(50),
+  ProgramName varchar(100),
+  SPID2     smallint,
+  requestID int
+  )
+insert into #sp_who execute sp_who2
+ 
+select s.*, t.name
+from #sp_who s left outer join
+(SELECT
+'SQLAgent - TSQL JobStep (Job 0x'+
+CONVERT(char(32),CAST(j.job_id AS binary(16)),2) +
+' : Step ' +
+CAST(js.step_id AS VARCHAR(3)) +
+')' as ProgramName, j.job_id, j.name
+FROM msdb.dbo.sysjobs AS j
+INNER JOIN msdb.dbo.sysjobsteps AS js
+ON j.job_id = js.job_id) t
+ON s.ProgramName=t.ProgramName
