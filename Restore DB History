@@ -1,0 +1,26 @@
+Select A.destination_database_name as [Restored_Database_Name],
+A.user_name as [RestoredBy_User_Name],
+A.Restore_Date,A.replace as [Replace],
+Case When A.restore_type='D' then 'Full'
+When A.restore_type='I' then 'Differential'
+When A.restore_type='L' then 'Log' End as [Restore_Type],
+B.database_name as [Backup_DatabaseName],
+B.database_creation_date as [Backup_DB_Creation_Date],
+B.server_name as [Backup_ServerName],
+B.user_name as [Backuped_by_User],
+B.backup_start_date as [Backup_DB_Start_Date],
+B.backup_finish_date as [Backup_DB_Finish_Date],
+Case When B.[Type]='D' then 'Full'
+When B.[Type]='I' then 'Differential'
+When B.[Type]='L' then 'Log' End as [Restore_Type],
+D.physical_device_name as [BackupFile],Position as [Backup_File_Position],
+D.family_sequence_number as [Split_Backup_Sequence]
+from msdb.dbo.restorehistory A
+INNER JOIN msdb.dbo.backupset B on A.backup_set_id=B.backup_set_id
+INNER JOIN msdb.dbo.backupmediafamily D on D.media_set_id=B.media_set_id
+INNER JOIN (Select Max(restore_history_id) as restore_history_id ,
+Destination_Database_Name
+from msdb.dbo.RestoreHistory
+where Restore_Type='D'
+Group by destination_database_name) C on C.destination_database_name=A.destination_database_name
+and A.restore_history_id >=C.restore_history_id
