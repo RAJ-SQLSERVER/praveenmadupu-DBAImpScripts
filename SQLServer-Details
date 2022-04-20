@@ -1,0 +1,185 @@
+IF OBJECT_ID('tempdb..#xp_msver') IS NOT NULL
+DROP TABLE #xp_msver
+
+IF OBJECT_ID('tempdb..#xp_loginconfig') IS NOT NULL
+DROP TABLE #xp_loginconfig
+
+CREATE TABLE #xp_msver
+( [Index] SMALLINT, 
+  [Name] VARCHAR(56), 
+  Internal_Value VARCHAR(56), 
+  Character_Value VARCHAR(256),
+)
+
+
+CREATE TABLE #xp_loginconfig
+( [Name] VARCHAR(56), 
+  Internal_Value VARCHAR(256), 
+)
+
+
+INSERT INTO #xp_msver
+EXEC xp_msver
+
+INSERT INTO #xp_loginconfig
+EXEC xp_loginconfig
+
+Alter Table #xp_msver 
+Add ValueDesc Varchar(256) Default NULL
+
+Declare @SQLVersion as Numeric(9,2)
+Declare @OSVersion as Numeric(9,2)
+Declare @PhysicalMemory as Numeric(9,2)
+Declare @ProcessorCount varchar(10)
+Select @SQLVersion = LEFT(Character_Value,4) From #xp_msver where [Name]='ProductVersion'
+Select @OSVersion = LEFT(Character_Value,4) From #xp_msver where [Name]='WindowsVersion'
+Select @PhysicalMemory = Substring(Character_Value,0,CharIndex('(',Character_Value)) From #xp_msver where [Name]='PhysicalMemory'
+Select @ProcessorCount = Character_Value From #xp_msver where [Name]='ProcessorCount'
+
+
+UPDATE #xp_msver SET ValueDesc =
+	 (CASE @SQLVersion
+		WHEN '9.00' THEN 'SQL Server 2005'
+		WHEN '10.0' THEN 'SQL Server 2008'
+		WHEN '10.5' THEN 'SQL Server 2008 R2'
+		WHEN '11.0' THEN 'SQL Server 2012'
+		WHEN '12.0' THEN 'SQL Server 2014'
+		WHEN '13.0' THEN 'SQL Server 2016'
+		WHEN '13.0' THEN 'SQL Server 2016'
+		WHEN '14.0' THEN 'SQL Server 2017'
+		WHEN '15.0' THEN 'SQL Server 2019'
+		ELSE 'Newer than SQL Server 2019' 
+		END) + ' ' + Cast(SERVERPROPERTY('Edition') as Varchar(256))
+WHERE Name='ProductVersion'
+
+UPDATE #xp_msver SET ValueDesc =
+	 (CASE @OSVersion
+		WHEN '5.0' THEN 'Windows 2000'
+		WHEN '5.1' THEN 'Windows XP'
+		WHEN '5.2' THEN 'Windows Server 2003/2003 R2'
+		WHEN '6.0' THEN 'Windows Server 2008/Windows Vista'
+		WHEN '6.1' THEN 'Windows Server 2008 R2/Windows 7'
+		WHEN '6.2' THEN 'Windows Server 2012/Windows 8'
+		WHEN '6.3' THEN 'Windows Server 2012 R2'
+		WHEN '10.0' THEN 'Windows Server 2016'
+		ELSE 'Windows vNext' END)
+WHERE Name='WindowsVersion'
+
+/*********Get SQL Port***********/
+
+Declare @TCP_PortDesc varchar(256)
+
+DECLARE     @ServerName SYSNAME
+,@InstanceID NVARCHAR(128)
+,@InstanceName NVARCHAR(128)
+,@tcp_port NVARCHAR(10)
+,@InstanceKey NVARCHAR(255)
+
+SELECT @ServerName = @@SERVERNAME
+SELECT @InstanceName = ISNULL((CAST(SERVERPROPERTY('InstanceName') AS NVARCHAR(128))), 'MSSQLSERVER')
+
+EXECUTE xp_regread @rootkey = 'HKEY_LOCAL_MACHINE'
+,@key = 'SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
+,@value_name = @InstanceName
+,@value = @InstanceID OUTPUT
+
+SELECT @InstanceKey = 'SOFTWARE\MICROSOFT\Microsoft SQL Server\' + @InstanceID + '\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
+
+EXEC xp_regread @rootkey = 'HKEY_LOCAL_MACHINE'
+,@key = @InstanceKey
+,@value_name = 'TcpDynamicPorts'
+,@value = @tcp_port OUTPUT
+
+IF @tcp_port IS NOT NULL
+SELECT @TCP_PortDesc = 'SQL Server (' + @InstanceName + ') uses dynamic tcp port: ' + CAST(@tcp_port AS NVARCHAR(128))
+ELSE
+BEGIN
+EXEC xp_regread @rootkey = 'HKEY_LOCAL_MACHINE'
+,@key = @InstanceKey
+,@value_name = 'TcpPort'
+,@value = @tcp_port OUTPUT
+SELECT @TCP_PortDesc = 'SQL Server (' + @InstanceName + ') uses static tcp port: ' + CAST(@tcp_port AS NVARCHAR(128))
+END
+
+/******************/
+	
+SELECT 
+   HostName = SERVERPROPERTY('ComputerNamePhysicalNetBIOS')
+   ,WindowsVersionDesc = (Select Max(ValueDesc) From #xp_msver where [Name]='WindowsVersion')
+   ,DefaultDomain = (Select Max(Internal_Value) From #xp_loginconfig where [Name]='default domain')
+   ,ServerTimeZone = (Select Convert(Numeric(18, 2), DateDiff(Minute, GETUTCDATE(), GETDATE()) / 60 + (DATEDIFF(Minute, GETUTCDATE(), GETDATE()) % 60) / 100.0))
+   ,MonitoringAccountExists = (select Max(Name) from sys.server_principals where name='lfn\RS-DXIMSQLSvc')
+   ,InstanceName = SERVERPROPERTY('SERVERNAME')
+   ,ProductVersion = SERVERPROPERTY('ProductVersion')
+   ,ProductVersionDesc = (Select Max(ValueDesc) From #xp_msver where [Name]='ProductVersion')
+   ,ProductLevel = SERVERPROPERTY('ProductLevel')
+   ,SQLCollation = SERVERPROPERTY('Collation') 
+   ,InstallationDate = (Select Max(create_date) From sys.server_principals Where sid = 0x010100000000000512000000)
+   ,ServerStatupTime = (Select create_date From sys.databases Where name = 'tempdb')
+   ,ResourceLastUpdateDateTime= SERVERPROPERTY('ResourceLastUpdateDateTime') 
+   ,ProcessID= SERVERPROPERTY('ProcessID') 
+   --,Sql_Port = (SELECT DISTINCT local_tcp_port FROM sys.dm_exec_connections WHERE session_id = @@SPID)
+   ,TCP_Port = @TCP_PortDesc
+   ,PhysicalMemory = @PhysicalMemory
+   ,MinMemory = (SELECT [value] FROM sys.configurations WHERE name like '%min server memory%')
+   ,MaxMemory = (SELECT [value] FROM sys.configurations WHERE name like '%max server memory%')
+   ,Sql_Cores = (SELECT COUNT(*) AS 'sql_cores' FROM sys.dm_os_schedulers WHERE status = 'VISIBLE ONLINE')
+   ,Max_DOP = (SELECT [value] FROM sys.configurations WHERE name like '%degree of parallelism%')
+   ,CostThresholForParallelism = (SELECT [value] FROM sys.configurations WHERE name like '%cost threshold for parallelism%')
+   ,BackupCompression = (CASE (SELECT [value] FROM sys.configurations WHERE name like '%backup compression default%') WHEN 0 THEN 'Disabled' WHEN 1 THEN 'Enabled' END)
+   ,ServiceAccount = (select max(service_account) from sys.dm_server_services where servicename like 'SQL Server (%)')
+   ,ServiceStartupType = (select max(startup_type_desc) from sys.dm_server_services where servicename like 'SQL Server (%)')
+   ,ServerAuthentication = (CASE SERVERPROPERTY('IsIntegratedSecurityOnly') 
+			WHEN 0 THEN 'SQL Server and Windows Authentication mode'
+			WHEN 1 THEN 'Windows Authentication mode' END)
+
+	,LoginAuditing = (Select Max(Internal_Value) From #xp_loginconfig where [Name]='audit level')
+	,IsClustered = (CASE SERVERPROPERTY('IsClustered')	WHEN 0 THEN 'False' WHEN 1 THEN 'True' END)
+	,IsHadrEnabled = (CASE SERVERPROPERTY('IsHadrEnabled') WHEN 0 THEN 'False' WHEN 1 THEN 'True' END)
+	,IsXTPSupported =(CASE SERVERPROPERTY('IsXTPSupported') WHEN 0 THEN 'False' WHEN 1 THEN 'True' END)
+	,FilestreamConfiguredLevel = (CASE SERVERPROPERTY('FilestreamConfiguredLevel') 
+			WHEN 0 THEN 'Disabled' 
+			WHEN 1 THEN 'Enabled for Transact-SQL Access' 
+			WHEN 2 THEN 'Enabled for Transact-SQL and Win32 Streaming Access' 
+			END) 
+	,InstanceDefaultDataPath = SERVERPROPERTY('InstanceDefaultDataPath')
+	,InstanceDefaultLogPath = SERVERPROPERTY('InstanceDefaultLogPath')
+	,ClrVersion = SERVERPROPERTY ('BuildClrVersion')
+	,NoOfUserDatabases= (select Count(name) from sys.databases where Database_id>4)
+	,NoOfDatabaseOtherThanOnlineState= (select Count(name) from sys.databases where state<>0)
+	,NoOfDatabaseInFullRecovery = (select count(name) from sys.databases where state=0 and Database_id>4 and recovery_model=1)
+	,NoOfDatabaseInBulkLogRecovery = (select count(name) from sys.databases where state=0 and Database_id>4 and recovery_model=2)
+	,NoOfDatabaseInSimpleRecovery = (select count(name) from sys.databases where state=0 and Database_id>4 and recovery_model=3)
+	,NoOfDatabasePublished = (select count(name) from sys.databases where is_published=1 Or is_merge_published = 1)
+	,NoOfDatabaseSubscribed = (select count(name) from sys.databases where is_subscribed=1)
+	,NoOfDistributionDatabases = (select count(name) from sys.databases where is_distributor=1)
+	,NoOfEncryptedDatabases = (select count(name) from sys.databases where is_encrypted=1)
+	,NoOfDatabasesInAG = (select count(name) from sys.databases where  replica_id is not null)
+	,NoOfDatabaseInLogShipping = (select count(primary_id) from msdb.dbo.log_shipping_primary_secondaries)
+	,DatabaseInMinimumCompatibilityLevel = (select min(Compatibility_level) from sys.databases where state=0)
+	,DataFileSizeMB = (select Cast(Sum(size * 8.0 / 1024) as bigint) DataFileSizeMB FROM sys.master_files where type=0)
+	,LogFileSizeMB = (select Cast(Sum(size * 8.0 / 1024) as bigint)  LogFileSizeMB FROM sys.master_files where type=1)
+	,MostRecentFullBackupTime = (select max(backup_finish_date) from msdb.dbo.backupset where type='D')
+	,MostRecentLogBackupTime = (select max(backup_finish_date) from msdb.dbo.backupset where type='L')
+	,MostRecentDiffBackupTime = (select max(backup_finish_date) from msdb.dbo.backupset where type='I')
+	,BackupDeviceType = (select top 1  (Case device_type 
+							WHEN 2 THEN 'Disk'
+							WHEN 5 THEN 'Tape'
+							WHEN 7 THEN 'Virtual device'
+							WHEN 9 THEN 'Azure Storage'
+							WHEN 105 THEN 'A permanent backup SQL database device' ELSE Cast(device_type as varchar(10)) END
+						) From msdb.dbo.backupmediafamily order by media_set_id desc)
+	,EnabledJobCount = (select count(job_id) from msdb.dbo.sysjobs where enabled=1)
+	,NoOfWindowsGroups = (select count(name) from sys.server_principals where type='G')
+	,NoOfWindowsLogins = (select count(name) from sys.server_principals where type='U')
+	,NoOfSQLLogins = (select count(name) from sys.server_principals where type='S')
+	,NoOfLinkedServers = (select count(name) from sys.servers where is_linked=1)
+	,NoOfOperators = (select count(*) from msdb.dbo.sysoperators)
+	,NoOfdbMaintPlans = (select count(plan_name) from msdb.dbo.sysdbmaintplans where plan_name<>'All ad-hoc plans')
+	,ReportServerDatabase = (select max(name)  from sys.databases where name like 'ReportServer%')
+	,LastEmailSendRequestInDatabaseMail = (select max(send_request_date) from msdb.dbo.sysmail_allitems)
+	,LastEmailSentByDatabaseMail = (select max(sent_date) from msdb.dbo.sysmail_allitems)
+	,DataCollectionTime = GetDate()
+
+--Drop Table Variable
+DROP TABLE #xp_msver
