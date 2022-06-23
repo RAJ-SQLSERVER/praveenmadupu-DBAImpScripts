@@ -1,0 +1,80 @@
+SQL server daily health check DBA script
+
+https://www.sqlserverblogforum.com/dba/sql-server-daily-health-check-dba-script/
+
+-- 1) Disk Free Space Check
+
+XP_FIXEDDRIVES
+
+-- 2) DB Online Status (Including SQL 2000)
+
+SELECT NAME,DATABASEPROPERTYEX (NAME,'STATUS') AS STATUS, GETDATE() as [Today_Date]
+FROM MASTER.DBO.SYSDATABASES WHERE DATABASEPROPERTYEX (NAME,'STATUS') NOT IN ('ONLINE')
+go
+WITH DB_STATUS AS
+(
+SELECT NAME,DB_STATE = CASE
+WHEN STATUS = 67584 THEN 'Restricted User'
+WHEN STATUS = 69632 THEN 'Single User'
+WHEN STATUS = 98560 THEN 'Emergency Mode'
+WHEN STATUS = 128 THEN 'Recovering'
+ELSE 'Unchecked' END, GETDATE() as [Today_Date]
+FROM MASTER.DBO.SYSDATABASES
+)
+SELECT * FROM DB_STATUS WHERE DB_STATE NOT IN ('Unchecked')
+
+-- 3) Failled Job check
+
+DECLARE @Date CHAR(8);
+SET @Date= CONVERT(CHAR(8), DATEADD(HH,-24,GETDATE()),112)
+
+SELECT  
+    @@SERVERNAME AS [Server Name],  
+    SUBSTRING(T2.name,1,140) AS [SQL Job Name],
+    T1.step_name AS [Step Name],
+    --msdb.dbo.agent_datetime(run_date, run_time) as 'RunDateTime',
+    COUNT(*) AS TotalFailures,
+    CAST(MIN(CONVERT(DATETIME,CAST(run_date AS CHAR(8)),101)) AS CHAR(11)) AS [MinFailure Date],
+    CAST(MAX(CONVERT(DATETIME,CAST(run_date AS CHAR(8)),101)) AS CHAR(11)) AS [MaxFailure Date],
+    GETDATE() as [Today_Date],
+    --MAX(msdb.dbo.agent_datetime(T1.run_date, T1.run_time)) AS 'RunDateTime',
+    MIN(T1.run_duration) StepDuration,
+    CASE MIN(T1.run_status)
+    WHEN 0 THEN 'Failed'
+    WHEN 1 THEN 'Succeeded'
+    WHEN 2 THEN 'Retry'
+    WHEN 3 THEN 'Cancelled'
+    WHEN 4 THEN 'In Progress'
+    END AS ExecutionStatus,
+    MAX(T1.message) AS [Error Message]
+FROM
+msdb..sysjobhistory T1 INNER JOIN msdb..sysjobs T2 ON T1.job_id = T2.job_id
+WHERE
+T1.run_status NOT IN (1,2,4)
+AND T1.step_id != 0
+AND run_date >= @Date
+--AND step_name NOT LIKE '%%'
+GROUP BY 
+  T1.step_name,
+  T2.name
+
+-- 4) Always ON check
+
+SELECT name, role_desc, operational_state_desc, recovery_health_desc,
+synchronization_health_desc, Getdate() as [Today_Date]
+FROM SYS.DM_HADR_AVAILABILITY_REPLICA_CLUSTER_STATES A 
+JOIN SYS.DM_HADR_AVAILABILITY_REPLICA_STATES B ON A.group_id=B.group_id
+JOIN SYS.AVAILABILITY_GROUPS_CLUSTER C ON B.group_id =C.group_id
+WHERE B.synchronization_health_desc NOT IN ('HEALTHY')
+
+-- Logshipping & DB Mirroring
+
+-- 5) Long running process
+-- Long running process based on last login time
+select db_name(dbid) as DBName , Cmd, Status as [Run_Status],datediff(minute,login_time,getdate()) as [Runtime_minute]
+,spid,blocked,lastwaittype,waittime,hostname,program_name,loginame,login_time from sysprocesses
+where spid > 51 and status not in ('background','sleeping')
+and datediff(minute,login_time,getdate()) >5 -- more than 5 minutes
+--and cmd not in ('waitfor','awaiting command')
+--and not in dbid (1,2,3,4)
+group by dbid,Cmd, Status ,login_time,spid,blocked,lastwaittype,waittime,hostname,program_name,loginame,login_time
