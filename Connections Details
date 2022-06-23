@@ -1,0 +1,37 @@
+SQL server connection and blocking finding script
+https://www.sqlserverblogforum.com/dba/sql-server-connection-and-blocking-finding-script/
+
+-- For SQL 2000
+select db_name(dbid),* from master.dbo.sysprocesses where spid> 51 and status <>'sleeping' -- and blocked <>0
+
+
+-- To find the spid and connections which are all running
+select db_name (r.database_id),r.command,r.wait_resource,s.status,s.session_id,
+r.blocking_session_id,r.last_wait_type,r.open_transaction_count,sql_handle,
+* from sys.dm_exec_sessions s  join sys.dm_exec_requests r
+on s.session_id =r.session_id 
+--where s.status <>'sleeping'
+and s.session_id >=51 
+and s.session_id  <>@@SPID -- exclude your session
+
+-- to find the blockings
+select db_name (r.database_id),r.command,r.wait_resource,s.status,s.session_id,
+r.blocking_session_id,r.last_wait_type,r.open_transaction_count, 
+* from sys.dm_exec_sessions s join sys.dm_exec_requests r
+on s.session_id =r.session_id 
+where r.blocking_session_id<>0 -- list blocking
+
+select *  FROM sys.dm_exec_requests
+
+-- to find the code which is run by spid connections
+SELECT T.TEXT As Query,
+R.session_id,
+R.status,
+R.command
+FROM sys.dm_exec_requests R
+CROSS APPLY sys.dm_exec_sql_text(sql_handle) AS T
+WHERE session_id = (54)
+
+-- OR (going to be deprecated)
+
+dbcc inputbuffer (52)
