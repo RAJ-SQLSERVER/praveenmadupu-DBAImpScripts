@@ -1,0 +1,77 @@
+https://www.sqlserverblogforum.com/dba/drive-space-check-sql-server-steps-and-scripts/
+
+--SQL 2000
+-- select name,(size/128.0) as size_mb,* from master.dbo.sysaltfiles order by size_mb desc
+
+-- To check the drive free space
+xp_fixeddrives
+
+------------------------------- get all the db file info & filter the drive, mdf/ldf
+select db_name(a.database_id) as DBname,a.name as DBfile ,
+size/128.0 AS CurrentSizeMB,
+--size/128.0 - ((size/128.0) - CAST(FILEPROPERTY(a.name, 'SpaceUsed') AS INT)/128.0) AS UsedSpaceMB,
+--size/128.0 - CAST(FILEPROPERTY(a.name, 'SpaceUsed') AS INT)/128.0 AS FreeSpaceMB,
+b.recovery_model_desc,a.type_desc ,
+CASE WHEN is_percent_growth = 0
+THEN LTRIM(STR(a.growth * 8.0 / 1024,10,1)) + ' MB, '
+ELSE 'By ' + CAST(a.growth AS VARCHAR) + ' percent, 'END +
+CASE WHEN max_size = -1 THEN 'unrestricted growth'
+ELSE 'restricted growth to ' +LTRIM(STR(max_size * 8.0 / 1024,10,1)) + ' MB'
+END AS Autogrow,a.physical_name
+from sys.master_files a join sys.databases b
+on a.database_id =b.database_id
+--where a.physical_name like 'e%'
+--and a.type_desc ='LOG'
+order by a.size/128.0 desc
+
+------------------------------- get the total, used and free space for particular DB
+use Dbname
+go
+SELECT DB_NAME() AS DBNAME,
+NAME AS FILENAME,
+SIZE/128.0 AS CURRENTSIZE_MB,
+SIZE/128.0 - ((SIZE/128.0) - CAST(FILEPROPERTY(NAME, 'SPACEUSED') AS INT)/128.0) AS USEDSPACE_MB,
+SIZE/128.0 - CAST(FILEPROPERTY(NAME, 'SPACEUSED') AS INT)/128.0 AS FREESPACEMB,
+PHYSICAL_NAME,DATABASEPROPERTYEX (DB_NAME(),'RECOVERY') AS RECOVERY_MODEL,TYPE_DESC,
+CASE WHEN IS_PERCENT_GROWTH = 0
+THEN LTRIM(STR(GROWTH * 8.0 / 1024,10,1)) + ' MB, '
+ELSE 'BY ' + CAST(GROWTH AS VARCHAR) + ' PERCENT, 'END +
+CASE WHEN MAX_SIZE = -1 THEN 'UNRESTRICTED GROWTH'
+ELSE 'RESTRICTED GROWTH TO ' +LTRIM(STR(MAX_SIZE * 8.0 / 1024,10,1)) + ' MB'
+END AS AUTO_GROW
+FROM SYS.MASTER_FILES
+WHERE DATABASE_ID = DB_ID()
+--AND type_desc ='LOG'
+--AND PHYSICAL_NAME like 'i%'
+------------------------------
+-- check the wait for transaction log file growth
+select log_reuse_wait_desc,* from sys.databases -- where name like '%%'
+
+Dbcc shrinkfile (logical log filename)
+-- Solution: Shrink log file, move any unwanted files/backups or ask windows to increase the space for drive.
+------------------------------
+
+-- olny for file groups
+SELECT DB_NAME() AS DBNAME,
+MF.NAME AS FILENAME, sf.name AS [File_Group_Name],
+SIZE/128.0 AS CURRENTSIZE_MB,
+SIZE/128.0 - ((SIZE/128.0) - CAST(FILEPROPERTY(mf.NAME, 'SPACEUSED') AS INT)/128.0) AS USEDSPACE_MB,
+SIZE/128.0 - CAST(FILEPROPERTY(mf.NAME, 'SPACEUSED') AS INT)/128.0 AS FREESPACEMB,
+PHYSICAL_NAME,DATABASEPROPERTYEX (DB_NAME(),'RECOVERY') AS RECOVERY_MODEL,mf.TYPE_DESC,
+CASE WHEN IS_PERCENT_GROWTH = 0
+THEN LTRIM(STR(GROWTH * 8.0 / 1024,10,1)) + ' MB, '
+ELSE 'BY ' + CAST(GROWTH AS VARCHAR) + ' PERCENT, 'END +
+CASE WHEN MAX_SIZE = -1 THEN 'UNRESTRICTED GROWTH'
+ELSE 'RESTRICTED GROWTH TO ' +LTRIM(STR(MAX_SIZE * 8.0 / 1024,10,1)) + ' MB'
+END AS AUTO_GROW
+FROM SYS.MASTER_FILES MF join sys.filegroups SF on MF.data_space_id =SF.data_space_id
+WHERE DATABASE_ID = DB_ID()
+order by CURRENTSIZE_MB desc
+
+-------------------------------
+--Error log checking, For any ticket generated
+------------------------------
+
+sp_readerrorlog 0,1,'is full'
+sp_readerrorlog 0,1,'out of space'
+--------------------------
